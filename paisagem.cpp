@@ -324,7 +324,7 @@ void paisagem::realiza_acao(int lower) //TODO : criar matriz de distancias como 
 
     case 2: 
         this->popIndividuos[lower]->anda();
-		this->apply_boundary(popIndividuos[lower]);
+		this->apply_boundary(lower);
 		break;
     }
 }
@@ -332,7 +332,7 @@ void paisagem::realiza_acao(int lower) //TODO : criar matriz de distancias como 
 void paisagem::doActionRW(int lower)
 {
     this->popIndividuos[lower]->anda();
-    this->apply_boundary(popIndividuos[lower]);
+    this->apply_boundary(lower);
 }
 
 /*
@@ -394,44 +394,33 @@ void paisagem::atualiza_vizinhos(individuo * const ag1) const //acessando os viz
 //TODO: conferir se a combinacao x , y da condicao esta gerando o efeito desejado
 //TBI: condicao periodica do codigo antigo feito com Garcia. Verificar se estah correta
 // (veja p. ex. um unico individuo apenas se movimentando)
-
-void paisagem::apply_boundary(individuo * const ind) //const
+// alterado para usar o indice do individuo (int i) ao inves de passar o individuo em si
+// como parametro para evitar um problema intermitente de acesso invalido de memoria
+// ~~ andrechalom 23/06/15
+void paisagem::apply_boundary(int i) //const
 {
+	individuo * ind = this->popIndividuos[i];
 	double rad = (double)ind->get_raio();
 	switch(this->boundary_condition)
 	{
-			
 		case 0:
 		if(this->landscape_shape==0)
 		{
 			if(rad*rad < (double)ind->get_x()*(double)ind->get_x()+(double)ind->get_y()*(double)ind->get_y())
 			{
-				for(unsigned int i=0; i<popIndividuos.size();i++)
-				{
-					if(this->popIndividuos[i]->get_id()==(int)ind->get_id())
-					{
 						delete this->popIndividuos[i];
 						this->popIndividuos.erase(this->popIndividuos.begin()+i);
-					}
-				}
 			}
 		}
-		
-		if(this->landscape_shape==1)
+		else if(this->landscape_shape==1)
 		{
 			if((double)ind->get_x()>=this->numb_cells*this->cell_size/2 || //>= porque na paisagem quadrado as bordas mais distantes de 0 iniciariam um proximo pixel que estaria fora da paisagem. Ou teriamos que assumir que esses pixels mais extremos tenha uma área maior, o que daria um trabalho adicional para implementar uma situação irreal.
 			   (double)ind->get_x()<(this->numb_cells*this->cell_size/2)*(-1)||
 			   (double)ind->get_y()>this->numb_cells*this->cell_size/2 ||
 			   (double)ind->get_y()<=(this->numb_cells*this->cell_size/-2))
 			{
-				for(unsigned int i=0; i<popIndividuos.size();i++)
-				{
-					if(this->popIndividuos[i]->get_id()==(int)ind->get_id()) //DUVIDA: porque tem int?
-					{
 						delete this->popIndividuos[i];
 						this->popIndividuos.erase(this->popIndividuos.begin()+i);
-					}
-				}
 			}			   
 		}		
 		break;

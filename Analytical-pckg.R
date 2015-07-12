@@ -1,10 +1,19 @@
-multiRun=function(PATH,nrep=10,b0,d0,m0,inc.b,inc.d,step,radius,dens.t,config,N0,lands=land,tm=100)
-{
+#### FUNCTION: Generate sequencies for naming folders.
+
+numSeqGen=function(strTempl=NULL,first,last,algMax=5,sepStrNum=""){
+  numSeq=sprintf(paste("%0",algMax,"d",sep=""),first:last)
+  fullSeqName=paste(strTempl,sepStrNum,numSeq,sep="")
+  return(fullSeqName)
+}
+
+#### FUNCTION : run multiple replicates of a simulation given by a specific parameters combination.
+
+multiReps=function(PATH,nrep=10,b0,d0,m0,inc.b,inc.d,step,radius,dens.t,config,N0,lands=land,tm=100,
+                   ini.seq=1,death.mat=1){
   oldpath <- getwd()
   dir.create(PATH, recursive=TRUE)
   setwd(PATH)
-  for(i in 1:nrep)
-  {
+  for(i in 1:nrep){
     TWoLife(taxa.basal=b0,
             taxa.morte=d0,
             move=m0,
@@ -17,35 +26,40 @@ multiRun=function(PATH,nrep=10,b0,d0,m0,inc.b,inc.d,step,radius,dens.t,config,N0
             #####################
             N=N0,
             AngVis=360,
-            death.mat=1,
+            death.mat=death.mat,
             landscape=lands,
             tempo=tm,            
-            out.code=i)
+            out.code=ini.seq-1+i)
   }
-  #Nt.reps=Nt.data(wdir=PATH,intervals=1,tmax=tm)
-  #plot.Nt(data=Nt.reps,growth=b0-d0,sum.incl=inc.b+inc.d)
-  #return(Nt.reps)
   setwd(oldpath)
 }
 
-# land <- Landscape(cover=1,type="b",cell.size=100)
-# Dcoef=10000*0.8/4
-# sim1=multiRun(PATH="~/Desktop/Comb-0023",
-#               nrep=20,
-#               b0=0.4,
-#               d0=0.1,
-#               m0=0.8,
-#               inc.b=100450,
-#               inc.d=0,
-#               step=100,
-#               radius=1460,
-#               dens.t=1,
-#               config=0,
-#               N0=50,
-#               lands=land,
-#               tm=2000
-# )
+#### FUNCTION : run multiple paramters combinations, each one with an specific number of replicates.
 
+multiRun=function(params,combs,pathsList=NULL,pathBase="~/Desktop/",algMax=3,strTempl="Comb-",
+                  nrep=20,tmax=100,land){
+  if(is.null(pathsList)){
+    PATH=paste(pathBase,numSeqGen(strTempl=strTempl,min(combs),max(combs),algMax=algMax),sep="")
+  } 
+  else PATH=pathsList
+  
+  for (i in combs){
+    multiReps(PATH=PATH[i],
+             nrep=nrep,
+             b0=params$b0[i],
+             d0=params$d0[i],
+             m0=params$movem.rate[i],
+             inc.b=params$incl.birth[i],
+             inc.d=params$incl.death[i],
+             step=params$step.length[i],
+             radius=params$radius[i],
+             dens.t=params$dens.type[i],
+             config=params$initial.config[i],
+             N0=params$N0[i],
+             lands=land,
+             tm=tmax)
+  }
+}
 
 #########################
 #  Ancillary functions 1
@@ -59,89 +73,158 @@ Support <- function(taxa.basal=0.6, taxa.morte=0.1, incl.birth=0.5/0.01,
 ####################
 #  Get N(t) data
 ####################
-Nt.data=function(wdir,intervals=1,tmax){
+
+##### NOTE: This function is specific for intervals = 1. Other intervals were not implemented. 
+
+getNt=function(wdir,intervals=1,tmax){
   oldpath <- getwd()
   setwd(wdir)
   files=dir()
-  Nt.arr=array(0,c(tmax+1,2,length(files)))
-  for(i in 1:length(files))
-  {
-    t1=read.table(files[i],sep=" ")
-    Nt=as.data.frame(table(t1[,1]))
-    if(is.na(t1[dim(t1)[1],2])) # condicao que indica se houve extincao.
-    {
-      Nt[dim(Nt)[1],2]=0 # Corrije o data.frame Nt para que N = 0 quando t (coluna 1) = t de extincao. Isso se deve ao fato
-      # do table levar em conta o tempo de extincao como um fator representado uma vez na planilha da dados.  
-    }
-    Nt[,1]=as.double(levels(Nt[,1]))
-    if(max(Nt[,1])<=tmax){miss=data.frame(Var1=seq(0,tmax,by=intervals))} else{miss=data.frame(Var1=seq(0,floor(max(Nt[,1])),by=intervals))}
-    Nt=merge(miss,Nt,all.x=T,all.y=T)
+  matNt=matrix(0,tmax+1,length(files)+1) # Matrix template for Nt data of each replicate 
+  matNt[,1]=0:tmax
+  tExt=NA
+  
+  for(i in 1:length(files)){
+    output2L=read.table(files[i],sep=" ")
+    lastLine=length(output2L[,1])
+    if(is.na(output2L[lastLine,2])){ # Is there populaition extinction?
+      EXT=1
+      tExt[i]=output2L[lastLine,1] # Time to extinction
+      output2L=output2L[-lastLine,] # For further purposes, remove last line (it has NAs).        
+    } else EXT=0
     
-    index=sort(which(is.na(Nt[,2])),decreasing=T)
-    if(length(index>0)){
-      if(index[1]==dim(Nt)[1])
-      {
-        Nt[index[1],2]=0
-        for(j in index[-1])
-        {
-          Nt[j,2]=Nt[j+1,2]
-        }  
-      } else{
-        for(j in index)
-        {
-          Nt[j,2]=Nt[j+1,2]
-        }
+    Nt=as.data.frame(table(output2L[,1]))
+    Nt[,1]=as.integer(levels(Nt[,1]))
+    colnames(Nt)[1]="times"
+    MAXt=max(Nt[,1])
+    
+    if(length(Nt[,1])==(MAXt+1)) # There are no time gaps in output2L and Nt
+      matNt[1:(MAXt+1),i+1]=Nt$Freq
+    else{ # There are time gaps in output2L and Nt
+      chkMissing=data.frame(times=0:MAXt)
+      Nt=merge(chkMissing,Nt,all.x=T,all.y=T)
+      missing=sort(which(is.na(Nt[,2])),decreasing=T)
+      for(j in missing){ # Fill the gaps
+        Nt$Freq[j]=Nt$Freq[j+1]
       }
+      matNt[1:(MAXt+1),i+1]=Nt$Freq
     }
-  Nt.arr[,1,i]=0:tmax
-  Nt.arr[,2,i]=Nt[1:(tmax+1),2]
   }
-return(Nt.arr)
-setwd(oldpath)  
+  ### Outputs
+  setwd(oldpath)
+  if(EXT) 
+    return(list(Nt=matNt,extincTimes=tExt,hasExt=as.logical(EXT)))
+  else 
+    return(list(Nt=matNt,extincTimes=NA,hasExt=as.logical(EXT)))    
 }
-# Nt.test=Nt.data("~/Desktop/Comb-0004",tmax=50)
+
+################
+#  Data Summary 
+################
+meanNt=function(DATA,exclude=c("none","zeros","ifExt")){
+  dimData=dim(DATA$Nt)
+  isExt=which(DATA$Nt[dimData[1],]==0) # if there is no extinction, returns an empty integer vector
+  if(exclude=="none"){
+    mNt=rowMeans(DATA$Nt[,2:dimData[2]])
+  } 
+  else{
+    if(exclude=="zeros"){
+      DATA$Nt[,2:dimData[2]][DATA$Nt[,2:dimData[2]]==0]=NA
+      mNt=rowMeans(DATA$Nt[,2:dimData[2]],na.rm=T) 
+    } 
+    else { # ifExt
+      #mNt=rep(NA,dimData[1]-1)
+      mNt=rowMeans(DATA$Nt[,-c(1,isExt)])
+      #mNt[-(isExt-1)]=mNtShort      
+    }
+  }       
+  return(mNt)
+}
 
 ####################
 #  Plot N(t) data
 ####################
-plot.Nt=function(dataSim=sim1,growth,sum.incl=0,land.area=10^8,name="N(t)",radius=0)
-{
-  plot(dataSim[,1,1],dataSim[,2,1],type="n",xlab="t",ylab="N (population size)",ylim=c(0,max(c(max(dataSim[,2,])+10),growth*land.area/sum.incl)),
-       cex=1.5, main = name)
-  for(i in 1:dim(dataSim)[3])
-  {
-    lines(dataSim[,1,i],dataSim[,2,i],col="gray50")
-  }
-  if(sum.incl==0)
-  {
-    curve(dataSim[1,2,1]*exp(growth*x),add=T,col="red",lwd=4)
-    legend(dim(dataSim)[1]/4,max(dataSim[,2,]),legend=c("Observed","Predicted","Replicates"),lty=1,lwd=2,col=c(1,2,"gray50"),bty="n")
-    lines(0:(dim(dataSim)[1]-1),apply(dataSim[,2,which(dataSim[dim(dataSim)[1],2,]!=0)],1,mean),col=1,lwd=4)
-  } else 
-  {
-    K=growth*land.area/sum.incl
-    lines(0:(dim(dataSim)[1]-1),apply(dataSim[,2,which(dataSim[dim(dataSim)[1],2,]!=0)],1,mean),col=1,lwd=4)
-    curve(K/(1+((K/dataSim[1,2,1])-1)*exp(-growth*x)),add=T,col="red",lwd=4)
-    legend(dim(dataSim)[1]/4,max(dataSim[,2,])/2,legend=c("Observed","Predicted","Replicates"),lty=1,lwd=2,col=c(1,2,"gray50"),bty="n")
+plotNt=function(DATA,r,sum.incl=0,land.area=10^8,R=0,D=0,
+                main="N(t)",ylab="N (population size)",xlab="t",
+                ylim=c(0,max(c(max(DATA$Nt[,-1])+10,r*land.area/sum.incl))),xlim=NULL,
+                bg="white",foreg="black",lineColors=c("gray50",1,2),cex=1.5,LINES=T,pch=NULL,
+                plotReps=T,plotEst=T,plotPred=T,meanType=c("none","zeros","ifExt")){
+  
+  dimData=dim(DATA$Nt)
+  old.par=par(bg=bg,fg=foreg,col.lab=foreg,col.axis=foreg,col.main=foreg)
+  plot(DATA$Nt[,1],DATA$Nt[,2],type="n",xlab=xlab,ylab=ylab,ylim=ylim,cex=cex,main=main) # plot template
+  
+  if(plotReps){ # Plot replicates?
+    if(DATA$hasExt){ # Is there extinction in this parameter combination?
+      for(i in 2:dimData[2]){    
+        if(is.na(DATA$extincTimes[i-1])){# Is there extinction in this replicate?
+          if(LINES) lines(DATA$Nt[,1],DATA$Nt[,i],col=lineColors[1])
+          else points(DATA$Nt[,1],DATA$Nt[,i],col=lineColors[1],cex=0.2)
+        } 
+        else {
+          lastPos=floor(DATA$extincTimes[i-1])
+          if(LINES) lines(c(DATA$Nt[1:(lastPos+1),1],DATA$extincTimes[i-1],DATA$Nt[(lastPos+2):dim(DATA$Nt)[1],1]),
+                          c(DATA$Nt[1:(lastPos+1),i],0,DATA$Nt[(lastPos+2):dim(DATA$Nt)[1],i]),col=lineColors[1])
+          else points(c(DATA$Nt[1:(lastPos+1),1],DATA$extincTimes[i-1],DATA$Nt[(lastPos+2):dim(DATA$Nt)[1],1]),
+                     c(DATA$Nt[1:(lastPos+1),i],0,DATA$Nt[(lastPos+2):dim(DATA$Nt)[1],i]),col=lineColors[1],cex=0.2)
+        }    
+      }
+    }
+    else {
+      for(i in 2:dimData[2]){
+        if(LINES) lines(DATA$Nt[,1],DATA$Nt[,i],col=lineColors[1]) 
+        else points(DATA$Nt[,1],DATA$Nt[,i],col=lineColors[1],cex=0.2)
+      }
+    }
   }
   
+  if(plotPred){# Plot prediction?
+    if(sum.incl==0){
+      curve(DATA$Nt[1,2]*exp(r*x),add=T,col=lineColors[3],lwd=2,n=1001)
+    }
+    else {
+      K=r*land.area/sum.incl
+      if(D>0 & R>0) {
+        #Kl=r*pi*R*R/sum.incl
+        #Kg=Kl*land.area/(pi*R*R)
+        curve(K+0*x,add=T,col=lineColors[3],lwd=2,n=1001)        
+      }
+      else {
+        curve(K/(1+((K/DATA$Nt[1,2])-1)*exp(-r*x)),add=T,col=lineColors[3],lwd=2,n=1001)
+      }
+    }
+  }
+  
+  if(plotEst){ # Plot estimated population sizes (mean(Nt))? 
+    lgth=length(meanType)
+    lt=0    
+    for(i in meanType){
+      lt=lt+1
+      meanN=meanNt(DATA,i)
+      meanN[is.nan(meanN)]=0
+      if(LINES) lines(DATA$Nt[,1],meanN,col=lineColors[2],lwd=2,lty=lt)
+      else points(DATA$Nt[,1],meanN,col=lineColors[2],cex=0.2)
+    }
+  }
+par(old.par)  
+# Legends need to be plotted manually.
 }
-# plot.Nt(Nt.test,growth=0,0,10^8)
-# plot.Nt(growth=0.3,sum.incl=100450)
-# sim1=Nt.data(wdir="~/Desktop/Comb-0022",tmax=2000)
+#legend(dim(dataSim)[1]/4,max(dataSim[,2,]),legend=c("Observed","Predicted","Replicates"),
+#lty=1,lwd=2,col=c(1,2,"gray50"),bty="n")
+
 
 #########################
 #  Ancillary functions 2
 #########################
-displacement=function(dado)
+displacement=function(obj)
 {
-  disp=sqrt(dado[,3]^2+dado[,4]^2)
+  disp=sqrt(obj[,3]^2+obj[,4]^2)
   return(disp)
 }
-dist.front=function(data,ind=10)
+frontDist=function(data,ind=10) # Specific format required for "data"
 {
-  vec2=sort(data,decreasing=T)
-  if(length(data)>=ind){front=vec2[ind]} else {front=vec2[length(data)]}
+  vec=sort(data,decreasing=T)
+  if(length(data)>=ind){front=vec[ind]} else {front=vec[length(data)]}
   return(front)
 }
 
@@ -165,7 +248,7 @@ velocity=function(work.dir="~/Desktop/Comb-0003",tmax=50,nrep=20,intervals=1)
     }
     vec1=displacement(t2)
     new.t2=data.frame(t2[,1],vec1)
-    front=aggregate(new.t2[,2],by = list(new.t2[,1]),FUN=dist.front,ind=10)
+    front=aggregate(new.t2[,2],by = list(new.t2[,1]),FUN=frontDist,ind=10)
     if(dim(front)[1]<tmax+1) # 
     {
       if(dim(front)[1]<(max(front[,1]+1))) # completa os valores faltantes no data frame de distancia da frente (antes da ocorrencia de possiveis extincoes)

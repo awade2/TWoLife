@@ -61,15 +61,6 @@ multiRun=function(params,combs,pathsList=NULL,pathBase="~/Desktop/",algMax=3,str
   }
 }
 
-#########################
-#  Ancillary functions 1
-#########################
-Support <- function(taxa.basal=0.6, taxa.morte=0.1, incl.birth=0.5/0.01, 
-                    incl.death=0, numb.cells=200, cell.size=2) {
-  densi.max = (taxa.basal-taxa.morte)/(incl.birth+incl.death)
-  return ((numb.cells*cell.size)^2 * densi.max)
-}
-
 ####################
 #  Get N(t) data
 ####################
@@ -213,61 +204,73 @@ par(old.par)
 #lty=1,lwd=2,col=c(1,2,"gray50"),bty="n")
 
 
-#########################
-#  Ancillary functions 2
-#########################
+########################
+#  Ancillary functions 
+########################
 displacement=function(obj)
 {
   disp=sqrt(obj[,3]^2+obj[,4]^2)
   return(disp)
 }
-frontDist=function(data,ind=10) # Specific format required for "data"
+
+### toDo: implementar calculo da frente por percentil.
+frontDist=function(data,ind=10) # Specific format required for "data". It is a vector containing the displacements of each individual at a specific time
 {
-  vec=sort(data,decreasing=T)
-  if(length(data)>=ind){front=vec[ind]} else {front=vec[length(data)]}
+  vec=sort(data,decreasing=T) # Sort data in decreasing order
+  if(length(data)>=ind) front=vec[ind] 
+  else front=vec[length(data)]
   return(front)
 }
 
 #########################
 #  Get velocity(t) data
 #########################
-velocity=function(work.dir="~/Desktop/Comb-0003",tmax=50,nrep=20,intervals=1)
+getSpeed=function(wdir=getwd(),tmax=50,nrep=20,intervals=1,ind=10) # Analisar possibilidade de trocar wdir por ouput2L
 {
   oldpath <- getwd()
-  setwd(work.dir)
+  setwd(wdir)
   files=dir()
-  vels.arr=matrix(0,tmax,(nrep+1))
-  vels.arr[,1]=1:tmax
-  for(i in 1:nrep)
-  {
-    t2=read.table(files[i],sep=" ")
-    if(is.na(t2[dim(t2)[1],2])) # condicao que indica se houve extincao.
-    {
-      t2=t2[-(dim(t2)[1]),] # Corrije o data.frame Nt para que N = 0 quando t (coluna 1) = t de extincao. Isso se deve ao fato
-      # do table levar em conta o tempo de extincao como um fator representado uma vez na planilha da dados.  
+  matSpeed=matrix(0,tmax+1,(nrep+1),dimnames=list(paste(1:(tmax+1)),c("Time",numSeqGen("R",1,nrep,nchar(nrep)))))
+  matSpeed[,1]=0:tmax
+  tExt=NA
+  #
+  for(i in 1:nrep){
+    output2L=read.table(files[i],sep=" ") ##### Analisar possibilidade de juntar com getNt. Assim cada output só teria que ser lido uma vez.
+    if(is.na(output2L[dim(output2L)[1],2])){ # Is there extinction?
+      tExt[i]=output2L[dim(output2L)[1],1]
+      output2L=output2L[-(dim(output2L)[1]),] # Remove last row, which indicates population extinction. A similar procedure is implemented on function getNt  
     }
-    vec1=displacement(t2)
-    new.t2=data.frame(t2[,1],vec1)
-    front=aggregate(new.t2[,2],by = list(new.t2[,1]),FUN=frontDist,ind=10)
-    if(dim(front)[1]<tmax+1) # 
-    {
-      if(dim(front)[1]<(max(front[,1]+1))) # completa os valores faltantes no data frame de distancia da frente (antes da ocorrencia de possiveis extincoes)
-      {
-        miss=data.frame(Group.1=seq(0,max(front[,1]),by=intervals))# else{miss=data.frame(Var1=seq(0,floor(max(Nt[,1])),by=intervals))}
-        front=merge(miss,front,all.x=T,all.y=T)
-        index=sort(which(is.na(front[,2])),decreasing=T)
-        for(j in index)
-        {
-          front[j,2]=front[j+1,2]
-        }
+   #     
+    displacements=displacement(output2L) # Individual displacement
+    new.output2L=data.frame(output2L[,1],displacements) # Two columns data.frame (1: time, 2: displacement)
+    front=aggregate(new.output2L[,2],by=list(new.output2L[,1]),FUN=frontDist,ind=ind) # Calculates the front distance based on the displacement vector
+    colnames(front)=c("times","speed")
+    MAXt=max(front$times)
+    nROW=dim(front)[1]
+    
+    if(nROW==(MAXt+1)){
+      if(!is.na(tExt[i])&floor(tExt[i])>MAXt) {
+        front=merge(data.frame(times=(MAXt+1):floor(tExt[i]),speed=front$speed[MAXt+1]),front,all.x=T,all.y=T)
+        MAXt=floor(tExt[i])
       }
-      
-      vels.arr[1:(dim(front)[1]-1),i+1]= diff(front[,2])# preenche a matriz de velocidades antes de um possivel evento de extincao
-      #vels.arr[dim(front)[1]:dim(vels.arr)[1],i+1]=0 # preenche o resto da matriz
-    } else {vels.arr[,i+1]= diff(front[,2])}# front[-1,2]/front[-1,1]
+      matSpeed[2:(MAXt+1),i+1]=diff(front$speed)
+    }
+    else{
+      chkMissing=data.frame(times=0:MAXt)
+      front=merge(chkMissing,front,all.x=T,all.y=T)
+      missing=sort(which(is.na(front$speed)),decreasing=T)
+      for(j in missing){
+        front$speed[j]=front$speed[j+1]
+      }
+      if(!is.na(tExt[i])&floor(tExt[i])>MAXt){
+        front=merge(data.frame(times=(MAXt+1):floor(tExt[i]),speed=front$speed[MAXt+1]),front,all.x=T,all.y=T)
+        MAXt=floor(tExt[i])
+      } 
+      matSpeed[2:(MAXt+1),i+1]=diff(front$speed)
+    }
   }
-  return(vels.arr)
   setwd(oldpath)
+  return(matSpeed)
 }
 
 ####################

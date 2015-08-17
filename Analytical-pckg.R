@@ -6,6 +6,9 @@ numSeqGen=function(strTempl=NULL,first,last,algMax=5,sepStrNum=""){
   return(fullSeqName)
 }
 
+mkLands=function(){
+  
+}
 #### FUNCTION : run multiple replicates of a simulation given by a specific parameters combination.
 
 multiReps=function(PATH,nrep=10,b0,d0,m0,inc.b,inc.d,step,radius,dens.t,config,N0,lands=land,tm=100,
@@ -60,90 +63,314 @@ multiRun=function(params,combs,pathsList=NULL,pathBase="~/Desktop/",algMax=3,str
              tm=tmax)
   }
 }
+#@@@@@@ End of functions for generating raw data 
 
-####################
-#  Get N(t) data
-####################
+##################################
+#  Get N (t) and/or Speed (t) data
+##################################
 
-##### NOTE: This function is specific for intervals = 1. Other intervals were not implemented. 
-
-getNt=function(wdir,intervals=1,tmax){
+# For a set of parameters combination (i.e. parameter space sample). FULL DATASET
+getDataPS=function(DIR,tmax,nrep,FUNCS=c("getNt","getSpeed"),ind=10){# DIR is the folder containing the outputs of each parameter combination of the evaluated parameter space
+  old.path=getwd()
+  setwd(DIR)
+  combsOutFolders=dir()
+  sizePS=length(combsOutFolders)
+  arrNt=arrSpeed=array(0,c(tmax+1,nrep+1,sizePS),dimnames=list(NULL,c("Time",paste("R",1:nrep,sep="")),combsOutFolders))
+  matExtTimes=matrix(0,nrep,sizePS,dimnames=list(paste("R",1:nrep,sep=""),combsOutFolders)) # toDo: look for better column names
+  vecHasExt=numeric(sizePS)
+  
+  for(i in 1:sizePS){
+    out1=getNSp(wdir=paste("./",combsOutFolders[i],sep=""),tmax=tmax,nrep=nrep,ind=10,FUNCS=FUNCS)
+    if("getNt" %in% FUNCS) arrNt[,,i]=out1$Nt
+    if("getSpeed" %in% FUNCS) arrSpeed[,,i]=out1$speed
+    matExtTimes[,i]=out1$extincTimes
+    vecHasExt[i]=out1$hasExt
+  }
+  setwd(old.path)
+  return(list(Nt=ifelse("getNt" %in% FUNCS,arrNt,NA),speed=ifelse("getSpeed" %in% FUNCS,arrSpeed,NA),extincTimes=matExtTimes,hasExt=as.logical(vecHasExt)))
+}
+# For multiple replicates of a given parameter combination
+getNSp=function(wdir=getwd(),tmax=50,nrep=20,ind=10,FUNCS=c("getNt","getSpeed")){ # BUG 1: Não funciona se tmax < que o tempo maximo da simulação.
+  # Folder's paths management
   oldpath <- getwd()
   setwd(wdir)
   files=dir()
-  matNt=matrix(0,tmax+1,length(files)+1) # Matrix template for Nt data of each replicate 
-  matNt[,1]=0:tmax
+  # variables
   tExt=NA
-  
-  for(i in 1:length(files)){
-    output2L=read.table(files[i],sep=" ")
-    lastLine=length(output2L[,1])
-    if(is.na(output2L[lastLine,2])){ # Is there populaition extinction?
-      EXT=1
-      tExt[i]=output2L[lastLine,1] # Time to extinction
-      output2L=output2L[-lastLine,] # For further purposes, remove last line (it has NAs).        
-    } else EXT=0
-    
-    Nt=as.data.frame(table(output2L[,1]))
-    Nt[,1]=as.integer(levels(Nt[,1]))
-    colnames(Nt)[1]="times"
-    MAXt=max(Nt[,1])
-    
-    if(length(Nt[,1])==(MAXt+1)) # There are no time gaps in output2L and Nt
-      matNt[1:(MAXt+1),i+1]=Nt$Freq
-    else{ # There are time gaps in output2L and Nt
-      chkMissing=data.frame(times=0:MAXt)
-      Nt=merge(chkMissing,Nt,all.x=T,all.y=T)
-      missing=sort(which(is.na(Nt[,2])),decreasing=T)
-      for(j in missing){ # Fill the gaps
-        Nt$Freq[j]=Nt$Freq[j+1]
-      }
-      matNt[1:(MAXt+1),i+1]=Nt$Freq
+  ### matrices template for Nt and for front speed data of each replicate 
+  matNt=matSpeed=matrix(0,tmax+1,(nrep+1),
+                        dimnames=list(paste(1:(tmax+1)),c("Time",numSeqGen("R",1,nrep,nchar(nrep)))))
+  matNt[,1]=matSpeed[,1]=0:tmax
+  # getting data
+  for(i in 1:nrep){
+    output2L=read.table(files[i],sep=" ") 
+    if(is.na(output2L[dim(output2L)[1],2])){ # Is there extinction?
+      if(output2L[dim(output2L)[1],1]<=tmax) 
+        tExt[i]=output2L[dim(output2L)[1],1]
+      output2L=output2L[-(dim(output2L)[1]),] # Remove last row, which indicates population extinction. 
     }
+    else tExt[i]=NA
+    # do calculations
+    if("getNt"%in%FUNCS){ 
+      cat(paste(i," ")) #### Remove this line after TESTS
+      Nt=getNt(output2L=output2L,tEx=tExt[i],tmax=tmax)
+      matNt[1:dim(Nt)[1],i+1]=Nt[,2]
+    } 
+    else matNt=NA 
+    if("getSpeed"%in%FUNCS){
+      speed=getSpeed(output2L=output2L,ind=ind,tEx=tExt[i],tmax=tmax)
+      matSpeed[2:(length(speed)+1),i+1]=speed
+    }
+    else matSpeed=NA
   }
-  ### Outputs
+  cat("\n") #### Remove this line after TESTS
+  if(sum(!is.na(tExt))>0) EXT=1 else EXT=0
   setwd(oldpath)
-  if(EXT) 
-    return(list(Nt=matNt,extincTimes=tExt,hasExt=as.logical(EXT)))
-  else 
-    return(list(Nt=matNt,extincTimes=NA,hasExt=as.logical(EXT)))    
+  return(list(Nt=matNt,speed=matSpeed,extincTimes=tExt,hasExt=as.logical(EXT)))   
 }
 
-################
-#  Data Summary 
-################
-meanNt=function(DATA,exclude=c("none","zeros","ifExt")){
-  dimData=dim(DATA$Nt)
-  isExt=which(DATA$Nt[dimData[1],]==0) # if there is no extinction, returns an empty integer vector
+### Aditional functions = Get data (N(t) or speed(t)). Used in getNSp, but can be used outside this functio if proper
+### "output2L" is given.
+getNt=function(output2L,tEx,tmax){
+  Nt=as.data.frame(table(output2L[,1]))
+  Nt[,1]=as.integer(levels(Nt[,1]))
+  colnames(Nt)=c("times","Nt")
+  MAXt=max(Nt[,1])
+  
+  Nt=rmTGaps(d.f=Nt,MAXt=MAXt,tEx=tEx)
+  if(MAXt>tmax) Nt=Nt[1:(tmax+1),]
+  
+  return(Nt)
+}
+
+#
+getSpeed=function(output2L,ind=10,tEx,tmax){
+  displacements=displacement(output2L) # Individual displacement
+  new.output2L=data.frame(output2L[,1],displacements) # Two columns data.frame (1: time, 2: displacement)
+  front=aggregate(new.output2L[,2],by=list(new.output2L[,1]),FUN=frontDist,ind=ind) # Calculates the front distance based on the displacement vector
+  colnames(front)=c("times","speed")
+  MAXt=max(front[,1])
+  
+  front=rmTGaps(d.f=front,MAXt=MAXt,tEx=tEx)
+  speed=diff(front[,2])
+  if(MAXt>tmax) speed=speed[1:tmax]
+  return(speed)
+}
+
+# Function to edit the data table in order to fill time gaps if they exist.
+rmTGaps=function(d.f,MAXt=MAXt,tEx){# d.f = data.frame ==> Equivalent of front or Nt on previous version of the code.
+  nROW=dim(d.f)[1]
+  #if(nROW!=(MAXt+1)){# There are time gaps from begining until the last recoreded time before extinction
+  chkMissing=data.frame(times=0:MAXt)
+  d.f=merge(chkMissing,d.f,all.x=T,all.y=T)
+  missing=sort(which(is.na(d.f[,2])),decreasing=T)
+  for(j in missing){
+    d.f[j,2]=d.f[j+1,2]
+  }
+  #}
+  colnames(d.f)=c("times","Var")
+  if(!is.na(tEx)&floor(tEx)>MAXt) { # Is there time gaps from the last recorded time to the extinction time?
+    d.f=merge(data.frame(times=(MAXt+1):floor(tEx),Var=d.f[MAXt+1,2]),d.f,all.x=T,all.y=T) # Fill gaps
+    #MAXt=floor(tEx)
+  }
+  return(d.f)
+}
+
+#@@@@@ End of functions for getting analytical datasets
+
+#######################################
+#  Simulation Summary and Ancillary functions
+#######################################
+
+# TO DO: ampliar para receber DATA = um objeto da função getDataPS. Muda porque os elementos $Nt ou $speed do objeto getDataPS 
+# é um array3D e não uma matriz; o elemento $extincTimes é uma matriz e não um vetor e o elemento $hasExt é um vetor de comprimento > 1.
+getMeanNSp=function(DATA,Type=c("n","v"),exclude=c("none","zeros","ifExt")){# DATA has a specific format: an object returned by getNSp
+  if(Type=="n") DATA.=DATA$Nt
+  else DATA.=DATA$speed
+  dimData=dim(DATA.)
+  isExt=which(DATA$extincTimes>0) # if there is no extinction, returns an empty integer vector
+  
   if(exclude=="none"){
-    mNt=rowMeans(DATA$Nt[,2:dimData[2]])
+    Means=rowMeans(DATA.[,2:dimData[2]])
+    return(Means)
   } 
-  else{
+  else {
     if(exclude=="zeros"){
-      DATA$Nt[,2:dimData[2]][DATA$Nt[,2:dimData[2]]==0]=NA
-      mNt=rowMeans(DATA$Nt[,2:dimData[2]],na.rm=T) 
-    } 
+      if(Type=="n"){
+        DATA.[,2:dimData[2]][DATA.[,2:dimData[2]]==0]=NA # Convert 0's into NAs
+        Means=rowMeans(DATA.[,2:dimData[2]],na.rm=T) 
+        return(Means)
+      } else {
+        for(i in 2:dimData[2]){
+          if(!is.na(isExt[i-1])){
+            DATA.[ceiling(isExt):dimData[1],i]=NA
+          }
+        }
+        Means=rowMeans(DATA.[,2:dimData[2]],na.rm=T)
+        return(Means)
+      }
+    }
     else { # ifExt
       #mNt=rep(NA,dimData[1]-1)
-      mNt=rowMeans(DATA$Nt[,-c(1,isExt)])
+      Means=rowMeans(DATA.[,-c(1,isExt)])
       #mNt[-(isExt-1)]=mNtShort      
+      return(Means)
     }
   }       
-  return(mNt)
 }
 
-####################
-#  Plot N(t) data
-####################
+# 
+fitApred=function(DATA,anPred,p.crit=0.05,tInterval=NULL,modelType=NULL,method=c("lastF","lastMLH","lm","MS-AIC")){
+  # BUG 2: methods lastMLH and MS-AIC need corrections
+  # DATA: a data.frame with the independent variable on 
+  # the first column and replicates (of the response variable) on the other columns. (e.g. getNSp.output$Nt, getNSp.output$speed)
+  # TO DO: ampliar para receber DATA = um objeto da função getDataPS. Muda porque os elementos $Nt ou $speed do objeto getDataPS 
+  # é um array3D e não uma matriz; o elemento $extincTimes é uma matriz e não um vetor e o elemento $hasExt é um vetor de comprimento > 1.
+  last=DATA[dim(DATA)[1],-1]
+  # method 1: Frequentist ==> last point
+  if("lastF" %in% method){
+   
+    tTest=t.test(last,mu=anPred)
+    #if(tTest$p.value<=p.crit){} # meanDiffMet1=tTest$estimate-anPred else meanDiffMet1=0  
+    return(tTest)
+  }
+  # method 2: logLH test ==> last point
+  if("lastMLH" %in% method){
+    M1=mle2(last~dnorm(m=anPred,sd=sd(last)),start=list(m=anPred),data=list(last))
+    M2=mle2(last~dnorm(m=mn,sd=sd(last)),start=list(mn=mean(last)),data=list(last))
+    estMean=coef(M2)
+    if(anPred<confint(M2)[1] & anPred>confint(M2)[2]){} # meanDiffMet2=tTest$estimate-anPred else meanDiffMet2=0  
+    LR=-2*(logLik(M1)-logLik(M2))
+  }
+  
+  if("lm" %in% method){
+    DATA.=data.frame(IV=rep(tInterval,dim(DATA[,-1])[2]),RV=as.vector(as.matrix(DATA[tInterval,-1])))
+    M1=lm(DATA.$RV~DATA.$IV)
+    return(list(summary(aov(M1)),M1))
+  }
+  # method 4: model selection / AIC ==> time interval for estimating parameters.
+  if("MS-AIC" %in% method){
+    DATA.=data.frame(IV=rep(tInterval,dim(DATA[,-1])[2]),RV=as.vector(as.matrix(DATA[tInterval,-1])))
+  
+    
+    M1=mle2(RV~dnorm(m=300,sd=sd(RV)),start=list(m=anPred),data=DATA.)
+    M2=mle2(RV~dnorm(m=mn,sd=sd(RV)),start=list(mn=mean(DATA.$RV)),data=DATA.)
+    M3=mle2(RV~dnorm(m=b0+b1*IV,sd=sd(RV)),start=list(b0=anPred,b1=0.0001),data=DATA.) # linear
+    nObs=dim(DATA.)[1]
+    tableAIC=ICtab(M1,M2,M3,type=ifelse(nObs/2<40,"AICc","AIC"),nobs=nObs,delta=T,weights=T,sort=T)
+    return(list(tableAIC,M1,M2,M3))
+    
+  }
+}
+
+# Calculates de extinction probability of a population undergoing a TWoLife dynamics with a given parameters combination  
+# This probability is given by the proportion of replicates in which extinction occured during the time inteval of the simulation
+# (i.e. tmax)
+getExtP=function(DATA){ # DATA = getNSp output
+  nrep=dim(DATA$Nt[,-1])[2]
+  pExt=ifelse(!DATA$hasExt,0,sum(DATA$extincTimes/DATA$extincTimes,na.rm=T)/nrep)
+  return(pExt)
+}
+
+# This function get the probability of extinction data from many simulations run according to 
+# a set of parameters combinations (i.e. sample of a parameters space)
+getExtPPS=function(DATA){# DATA: an object from getDataPS
+  dims=dim(DATA$Nt)
+  pExt=numeric(dims[3])
+  for(i in 1:dims[3]){
+    pExt[i]=ifelse(!DATA$hasExt[i],0,sum(DATA$extincTimes[,i]/DATA$extincTimes[,i],na.rm=T)/(dims[2]-1))
+    # getExtP(DATA$Nt[,,i])
+  }
+  names(pExt)=colnames(DATA$extincTimes)
+  cat("\n *** Extinction Probabilities *** \n \n")
+  return(pExt)
+}
+
+##### @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+##### Make table for results analysis
+##### @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+eqFrom2L=function(DATA,modelType){# DATA columns must have proper names (see .... for allowed names) according to the TWoLife parameters, initial conditions and analytical predictions
+  newTab=switch(modelType,
+         SG=data.frame(r=rCalc(DATA),Nt=NKCalc(DATA,F)),
+         DDG=data.frame(r=rCalc(DATA),sumSlopes=DATA$bSlope+DATA$dSlope,K=NKCalc(DATA)),
+         RW=data.frame(D=DCalc.2D(DATA),Speed=speedCalc(DATA,T)), 
+         RDsk=data.frame(r=rCalc(DATA),Nt=NKCalc(DATA,F),D=DCalc.2D(DATA),Speed=speedCalc(DATA)),
+         RDfk=data.frame(r=rCalc(DATA),sumSlopes=DATA$bSlope+DATA$dSlope,densK=NKCalc(DATA)$densK,
+                         locArea=NKCalc(DATA)$locArea,Kl=NKCalc(DATA)$Kl,Kg=NKCalc(DATA)$Kg,D=DCalc.2D(DATA),
+                         Speed=speedCalc(DATA)),
+         stop(paste("modelType",modelType,"not included",sep=" ")))
+  return(newTab)
+  # In cases SG and RD, Nt and speed is a function of time. Thus, to summarize these variable in a single value, 
+  # we used the mean among replicates at the end of the simulation. 
+}
+
+rCalc=function(DATA){
+  r=DATA$b0-DATA$d0
+  return(r)
+}
+DCalc.2D=function(DATA){
+  D=DATA$w*DATA$step^2/4
+  return(D)
+}
+
+NKCalc=function(DATA,is.DD=T){
+  if(!is.DD){
+    Nt=DATA$N0*exp(rCalc(DATA)*as.integer(DATA$tmax))
+    return(Nt)
+  }
+  else {
+    if("R" %in% colnames(DATA)){
+      densK=rCalc(DATA)/(DATA$bSlope-DATA$dSlope)
+      percepArea=pi*DATA$R*DATA$R
+      Kl=percepArea*densK
+      Kg=densK*DATA$landSize
+      return(list(locArea=percepArea,densK=densK,Kl=Kl,Kg=Kg))
+    }
+    else {
+      K=rCalc(DATA)/(DATA$bSlope-DATA$dSlope)
+      return(K)
+    }
+  }  
+}
+
+speedCalc=function(DATA,is.RW=F){
+  if(!is.RW) speed=2*sqrt(DCalc.2D(DATA)*rCalc(DATA))
+  else speed=2*sqrt(DCalc.2D/as.integer(DATA$tmax))
+  return(speed)
+}
+
+# Moving window mean
+
+#
+displacement=function(obj,XYref=c(0,0))
+{
+  disp=sqrt((obj[,3]-XYref[1])^2+(obj[,4]-XYref[2])^2)
+  return(disp)
+}
+
+### toDo: implementar calculo da frente por percentil.
+frontDist=function(data,ind=10) # Specific format required for "data". It is a vector containing the displacements of each individual at a specific time
+{
+  vec=sort(data,decreasing=T) # Sort data in decreasing order
+  if(length(data)>=ind) front=vec[ind] 
+  else front=vec[length(data)]
+  return(front)
+}
+
+#########
+#  Plots 
+#########
+
+# plot Nt data
 plotNt=function(DATA,r,sum.incl=0,land.area=10^8,R=0,D=0,
                 main="N(t)",ylab="N (population size)",xlab="t",
                 ylim=c(0,max(c(max(DATA$Nt[,-1])+10,r*land.area/sum.incl))),xlim=NULL,
-                bg="white",foreg="black",lineColors=c("gray50",1,2),cex=1.5,LINES=T,pch=NULL,
-                plotReps=T,plotEst=T,plotPred=T,meanType=c("none","zeros","ifExt")){
-  
+                bg="white",foreg="black",lineColors=c("gray50",1,2),cex=1.5,LINES=T,lwPred=2,pch=NULL,
+                plotReps=T,plotEst=T,plotPred=T,meanType=c("none","zeros","ifExt")){ # DATA = list returned by getNSp()
   dimData=dim(DATA$Nt)
   old.par=par(bg=bg,fg=foreg,col.lab=foreg,col.axis=foreg,col.main=foreg)
-  plot(DATA$Nt[,1],DATA$Nt[,2],type="n",xlab=xlab,ylab=ylab,ylim=ylim,cex=cex,main=main) # plot template
+  plot(DATA$Nt[,1],DATA$Nt[,2],type="n",xlab=xlab,ylab=ylab,xlim=xlim,ylim=ylim,cex=cex,main=main) # plot template
   
   if(plotReps){ # Plot replicates?
     if(DATA$hasExt){ # Is there extinction in this parameter combination?
@@ -157,7 +384,7 @@ plotNt=function(DATA,r,sum.incl=0,land.area=10^8,R=0,D=0,
           if(LINES) lines(c(DATA$Nt[1:(lastPos+1),1],DATA$extincTimes[i-1],DATA$Nt[(lastPos+2):dim(DATA$Nt)[1],1]),
                           c(DATA$Nt[1:(lastPos+1),i],0,DATA$Nt[(lastPos+2):dim(DATA$Nt)[1],i]),col=lineColors[1])
           else points(c(DATA$Nt[1:(lastPos+1),1],DATA$extincTimes[i-1],DATA$Nt[(lastPos+2):dim(DATA$Nt)[1],1]),
-                     c(DATA$Nt[1:(lastPos+1),i],0,DATA$Nt[(lastPos+2):dim(DATA$Nt)[1],i]),col=lineColors[1],cex=0.2)
+                      c(DATA$Nt[1:(lastPos+1),i],0,DATA$Nt[(lastPos+2):dim(DATA$Nt)[1],i]),col=lineColors[1],cex=0.2)
         }    
       }
     }
@@ -171,126 +398,146 @@ plotNt=function(DATA,r,sum.incl=0,land.area=10^8,R=0,D=0,
   
   if(plotPred){# Plot prediction?
     if(sum.incl==0){
-      curve(DATA$Nt[1,2]*exp(r*x),add=T,col=lineColors[3],lwd=2,n=1001)
+      curve(DATA$Nt[1,2]*exp(r*x),add=T,col=lineColors[3],lwd=lwPred,n=1001)
     }
     else {
       K=r*land.area/sum.incl
       if(D>0 & R>0) {
         #Kl=r*pi*R*R/sum.incl
         #Kg=Kl*land.area/(pi*R*R)
-        curve(K+0*x,add=T,col=lineColors[3],lwd=2,n=1001)        
+        curve(K+0*x,add=T,col=lineColors[3],lwd=lwPred,n=1001)        
       }
       else {
-        curve(K/(1+((K/DATA$Nt[1,2])-1)*exp(-r*x)),add=T,col=lineColors[3],lwd=2,n=1001)
+        curve(K/(1+((K/DATA$Nt[1,2])-1)*exp(-r*x)),add=T,col=lineColors[3],lwd=lwPred,n=1001)
       }
     }
   }
   
   if(plotEst){ # Plot estimated population sizes (mean(Nt))? 
-    lgth=length(meanType)
+    #lgth=length(meanType)
     lt=0    
     for(i in meanType){
       lt=lt+1
-      meanN=meanNt(DATA,i)
+      meanN=getMeanNSp(DATA,Type="n",i)
       meanN[is.nan(meanN)]=0
       if(LINES) lines(DATA$Nt[,1],meanN,col=lineColors[2],lwd=2,lty=lt)
-      else points(DATA$Nt[,1],meanN,col=lineColors[2],cex=0.2)
+      else points(DATA$Nt[,1],meanN,col=lineColors[2],cex=cex,pch=pch)
     }
   }
-par(old.par)  
-# Legends need to be plotted manually.
-}
-#legend(dim(dataSim)[1]/4,max(dataSim[,2,]),legend=c("Observed","Predicted","Replicates"),
-#lty=1,lwd=2,col=c(1,2,"gray50"),bty="n")
-
-
-########################
-#  Ancillary functions 
-########################
-displacement=function(obj)
-{
-  disp=sqrt(obj[,3]^2+obj[,4]^2)
-  return(disp)
+  par(old.par)  
+  # Legends need to be plotted manually.
 }
 
-### toDo: implementar calculo da frente por percentil.
-frontDist=function(data,ind=10) # Specific format required for "data". It is a vector containing the displacements of each individual at a specific time
-{
-  vec=sort(data,decreasing=T) # Sort data in decreasing order
-  if(length(data)>=ind) front=vec[ind] 
-  else front=vec[length(data)]
-  return(front)
-}
-
-#########################
-#  Get velocity(t) data
-#########################
-getSpeed=function(wdir=getwd(),tmax=50,nrep=20,intervals=1,ind=10) # Analisar possibilidade de trocar wdir por ouput2L
-{
-  oldpath <- getwd()
-  setwd(wdir)
-  files=dir()
-  matSpeed=matrix(0,tmax+1,(nrep+1),dimnames=list(paste(1:(tmax+1)),c("Time",numSeqGen("R",1,nrep,nchar(nrep)))))
-  matSpeed[,1]=0:tmax
-  tExt=NA
-  #
-  for(i in 1:nrep){
-    output2L=read.table(files[i],sep=" ") ##### Analisar possibilidade de juntar com getNt. Assim cada output só teria que ser lido uma vez.
-    if(is.na(output2L[dim(output2L)[1],2])){ # Is there extinction?
-      tExt[i]=output2L[dim(output2L)[1],1]
-      output2L=output2L[-(dim(output2L)[1]),] # Remove last row, which indicates population extinction. A similar procedure is implemented on function getNt  
+#  Plot speed data
+plotSpeed=function(DATA,r,D,
+                   main="Speed of the expansion front",ylab="Speed (distance/time)",xlab="t",
+                   ylim=NULL,xlim=NULL,
+                   bg="white",foreg="black",lineColors=c("gray50",1,2),cex=1.5,LINES=T,pch=NULL,lwPred=NULL,
+                   plotReps=T,plotEst=T,plotPred=T,meanType=c("none","zeros","ifExt")){ # DATA = list returned by getNSp()
+  dimData=dim(DATA$speed)
+  old.par=par(bg=bg,fg=foreg,col.lab=foreg,col.axis=foreg,col.main=foreg)
+  plot(DATA$speed[,1],DATA$speed[,2],type="n",xlab=xlab,ylab=ylab,ylim=ylim,cex=cex,main=main) # plot template
+  
+  if(plotReps){ # Plot replicates?
+    if(DATA$hasExt){ # Is there extinction in this parameter combination?
+      for(i in 2:dimData[2]){    
+        if(is.na(DATA$extincTimes[i-1])){# Is there extinction in this replicate?
+          if(LINES) lines(DATA$speed[,1],DATA$speed[,i],col=lineColors[1])
+          else points(DATA$speed[,1],DATA$speed[,i],col=lineColors[1],cex=0.2)
+        } 
+        else {
+          lastPos=floor(DATA$extincTimes[i-1])
+          if(LINES) lines(c(DATA$speed[1:(lastPos+1),1],DATA$extincTimes[i-1],DATA$speed[(lastPos+2):dim(DATA$speed)[1],1]),
+                          c(DATA$speed[1:(lastPos+1),i],0,DATA$speed[(lastPos+2):dim(DATA$speed)[1],i]),col=lineColors[1])
+          else points(c(DATA$speed[1:(lastPos+1),1],DATA$extincTimes[i-1],DATA$speed[(lastPos+2):dim(DATA$speed)[1],1]),
+                      c(DATA$speed[1:(lastPos+1),i],0,DATA$speed[(lastPos+2):dim(DATA$speed)[1],i]),col=lineColors[1],cex=0.2)
+        }    
+      }
     }
-   #     
-    displacements=displacement(output2L) # Individual displacement
-    new.output2L=data.frame(output2L[,1],displacements) # Two columns data.frame (1: time, 2: displacement)
-    front=aggregate(new.output2L[,2],by=list(new.output2L[,1]),FUN=frontDist,ind=ind) # Calculates the front distance based on the displacement vector
-    colnames(front)=c("times","speed")
-    MAXt=max(front$times)
-    nROW=dim(front)[1]
+    else {
+      for(i in 2:dimData[2]){
+        if(LINES) lines(DATA$speed[,1],DATA$speed[,i],col=lineColors[1]) 
+        else points(DATA$speed[,1],DATA$speed[,i],col=lineColors[1],cex=0.2)
+      }
+    }
+  }
+  
+  if(plotPred){# Plot prediction?
+    if(r==0) curve(2*sqrt(D/x),lineColors[3],add=T,lwd=lwPred,n=1001)
+    else curve(2*sqrt(r*D)+0*x,col=lineColors[3],add=T,lwd=lwPred,n=1001)
+    }
     
-    if(nROW==(MAXt+1)){
-      if(!is.na(tExt[i])&floor(tExt[i])>MAXt) {
-        front=merge(data.frame(times=(MAXt+1):floor(tExt[i]),speed=front$speed[MAXt+1]),front,all.x=T,all.y=T)
-        MAXt=floor(tExt[i])
-      }
-      matSpeed[2:(MAXt+1),i+1]=diff(front$speed)
-    }
-    else{
-      chkMissing=data.frame(times=0:MAXt)
-      front=merge(chkMissing,front,all.x=T,all.y=T)
-      missing=sort(which(is.na(front$speed)),decreasing=T)
-      for(j in missing){
-        front$speed[j]=front$speed[j+1]
-      }
-      if(!is.na(tExt[i])&floor(tExt[i])>MAXt){
-        front=merge(data.frame(times=(MAXt+1):floor(tExt[i]),speed=front$speed[MAXt+1]),front,all.x=T,all.y=T)
-        MAXt=floor(tExt[i])
-      } 
-      matSpeed[2:(MAXt+1),i+1]=diff(front$speed)
+  if(plotEst){ # Plot estimated population sizes (mean(Nt))? 
+    #lgth=length(meanType)
+    lt=0    
+    for(i in meanType){
+      lt=lt+1
+      meanS=getMeanNSp(DATA,Type="v",i)
+      meanS[is.nan(meanS)]=0
+      if(LINES) lines(DATA$speed[,1],meanS,col=lineColors[2],lwd=2,lty=lt)
+      else points(DATA$speed[,1],meanS,col=lineColors[2],cex=cex,pch=pch)
     }
   }
-  setwd(oldpath)
-  return(matSpeed)
+  par(old.par)  
+  # Legends need to be plotted manually.
 }
 
-####################
-#  Plot velocity(t)
-####################
-plot.vel=function(object,nrep=20,Dcoef=D,b0=0,d0=0,name="V(t)",yrange=NULL)
-{
-  growth=b0-d0
-  plot(object[,1],object[,2],type="n",main=name,xlab="t",ylab="velocity (distance/time)",ylim=yrange,cex.main=0.7)
-  for(i in 1:nrep)
-  {
-    lines(object[,1],object[,i+1],col="gray50") # replicates
+
+
+
+
+
+
+
+
+
+
+
+
+
+######## IMPLEMENTING #################
+
+
+plotDenDis=function(output2L,times,plot3D=F){
+  disp=displacement(output2L)
+  for(i in 1:length(times)){
+    par(mfrow=c(1,1))
+    index=which(output2L[,1]==times[i])
+    plot(disp[index],output2L[index,5],main=paste("t = ",times[i],sep="")) #### Ajustar parametros gráficos
+    
   }
-  if(nrep>1){lines(object[,1],apply(object[,-1],1,mean),lwd=4)} # mean replicates (observed)
-  if(b0==0 && d0==0){curve(2*sqrt(Dcoef/x),col=2,add=T,lwd=3)} else {abline(h=2*sqrt(growth*Dcoef),col=2,lwd=3)} # expected
+
 }
 
-# teste=velocity("~/Desktop/Comb-0014",nrep=100,tmax=50)
-# Dcoef=10000*0.8/4
-# plot.vel(teste,Dcoef=Dcoef,nrep=20,growth=0.03)
+Anima=function(DATA,landscape,framePsec=10,Colors=c(indiv="white",Habitat="green",Matrix="black")){# landscape must have "landscape" class 
+  library(animation)
+  LatLong=landscape$numb.cells
+  opts=ani.options(outdir=getwd(),ani.width=LatLong^2,ani.height=LatLong^2)
+  lands=matrix(landscape$scape,landscape$numb.cells,landscape$numb.cells)
+  saveVideo({mkPlots(DATA,unique(DATA$V1),land=lands,LatLong=LatLong,Colors=Colors)},video.name = "./movement.mp4",
+            interval=1/framePsec,img.name="T")
+  ani.options(opts)
+}
+
+mkPlots=function(DATA,times=unique(DATA$V1),maxX=max(DATA$V3),maxY=max(DATA$V4),LatLong,
+                 land,Colors){  
+  for (t in 1:length(times)){
+    index<-which(DATA$V1==times[t]);
+    #mycolors<-allcolors[DATA$V2[index]];
+    image(1:LatLong,1:LatLong,land,col=Colors[2:3],xlab="Longitude",ylab="Latitude")
+    points(DATA$V3[index],DATA$V4[index],main=paste("Time = ",times[t],sep=""),col=Colors[1],pch=19);
+  }
+}
+
+
+
+
+
+
+
+
+
+
 
 ####################################
 #  Plot XY density distribution data
